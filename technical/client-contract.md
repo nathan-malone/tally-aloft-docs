@@ -1,0 +1,19 @@
+Technical · Client contract · October 2026
+
+# Tally Aloft — Client Contract
+
+The web, iOS and Android apps generate their API client from the backend's OpenAPI schema, and mobile users keep old builds for months. These rules keep every supported client working, and both sides follow them: the backend enforces them and the apps rely on them. This document is the single source for them. The [backend structure](backend/structure.md#client-contract-in-the-code) shows where each lives in the backend, and the [client structure](clients/structure.md#data-flow) shows where each lives in the apps.
+
+| Concern | Rule |
+| --- | --- |
+| Schema | FastAPI's OpenAPI schema is exported to a committed `openapi.json`, and CI fails if it's out of date. Each release tag publishes it for the clients to sync from. |
+| Operation IDs | Set explicitly as `<domain>_<verb>` (for example `logbook_list_flights`) through FastAPI's `generate_unique_id_function`. They become client function names (`logbookListFlightsOptions`), so renaming one is a breaking change. |
+| Breaking changes | CI runs oasdiff against the schema of every supported client release, not just the oldest, and fails on breaking changes. Fields and endpoints are added freely; removing or changing one waits until no supported client uses it. Clients treat enums as open and show a fallback for an unknown value, which is what makes a new response enum value safe to add. |
+| Client versions | Every request sends `X-Client-Platform` (`web`, `ios`, `android`) and `X-Client-Version`. The API keeps a minimum supported version per platform in settings and rejects older clients with `400` and error code `client_version_unsupported`, which the apps show as an "update required" screen. Requests without the headers, and webhooks, are not checked. This is an upgrade prompt, not a security control. |
+| Idempotency | Every client write endpoint requires an `Idempotency-Key` header (a client-generated UUIDv7), declared in the schema so the generated client sends it. A repeat returns the original result, even one that arrives while the first is still committing. The same key with a different request body gets `422` with code `idempotency_key_reused`. Keys are scoped to the pilot and operation and kept for 24 hours. Clients keep a key until the write succeeds. Webhooks deduplicate on the provider's event ID instead. |
+| Concurrent edits | An update carries the version it was based on (`base_version`). If that isn't the current version, the API returns `409` with code `version_conflict`, and the client shows the newer version. This covers a phone edit racing a web edit, and an instructor correcting an entry while the student edits it. |
+| Jobs | Long-running work (PDFs, digitization) returns a job ID. Clients poll `GET /jobs/{id}` or wait for a push, then download the result from the short-lived presigned URL the job returns. |
+| CORS | Allows only the web app's origins (`https://tallyaloft.app` in production). Allowed request headers: `Authorization`, `Content-Type`, `Idempotency-Key`, `X-Client-Platform`, `X-Client-Version`, `traceparent`, `tracestate`, `sentry-trace` and `baggage`. |
+| Tracing | Clients configure Sentry to send W3C `traceparent` (`propagateTraceparent: true`) to the API's origin (listed in `tracePropagationTargets`). The API calls `logfire.configure(distributed_tracing=True)` and samples server spans on its own, regardless of the client's sampling decision. |
+| Errors | Every error response, validation errors included, uses one JSON shape with a stable machine-readable `code`, so clients branch on codes, not messages. |
+| Rate limits | AWS WAF rate rules at the edge, plus per-user Valkey limits on expensive endpoints (page digitization, PDF generation, presigned URLs). Limited requests get `429` with code `rate_limited`. |
