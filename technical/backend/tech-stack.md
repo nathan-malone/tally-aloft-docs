@@ -86,6 +86,21 @@ One backend API serves the web, iOS and Android clients. This document records w
 
 - **Migrations** run as a one-off ECS task before each deploy. Old and new code run side by side during a rolling deploy, so schema changes are expand-then-contract: add, backfill, switch, then remove in a later release. Migrations set a `lock_timeout` and build indexes `CONCURRENTLY`.
 - **Major Postgres upgrades** use RDS Blue/Green deployments to keep downtime short.
+- **Image contract.** This is what `tally-aloft-infra` builds on. Each story that adds a process, route or setting extends it.
+  - **Image:** one `linux/arm64` image per commit, from the backend's one `Dockerfile`. It runs as UID 10001, not root, and holds only the virtual environment: no source tree, tests, dev dependencies, `.env` file or secrets.
+  - **API command:** the default command, in exec form: `uvicorn tally_aloft.main:app --host 0.0.0.0 --port 8000 --no-proxy-headers --timeout-graceful-shutdown 25`. It runs one process per container, and scaling adds tasks.
+  - **Port:** `8000`.
+  - **Health:** `GET /livez` returns `200` whenever the process routes and handles HTTP, and touches no dependency. It is for the load balancer's target-group check and the container health check. The image has no `curl`, so a container check runs `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/livez', timeout=2)"`.
+  - **Settings:** environment variables only, prefixed `TALLY_`. Durations are integer seconds, lists are comma-separated, and maps are JSON. Secrets arrive as environment variables from Secrets Manager.
+
+    | Variable | Format | Default | Required |
+    | --- | --- | --- | --- |
+    | `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production` | none | yes |
+    | `TALLY_FORWARDED_ALLOW_IPS` | comma-separated addresses or CIDR networks; `*` is rejected | `127.0.0.1` | no; infra sets it to the load balancer's subnets |
+
+  - **Startup failure:** a missing or invalid setting stops the process before it serves, with exit code 1 and one line on stderr that names each variable and its error type, never its value.
+  - **Logs:** Uvicorn's access log on stdout carries each request's client address (after proxy handling), path and query string, so infra sets the retention of the log group that receives it.
+  - **Shutdown:** on `SIGTERM`, the API stops accepting connections and drains in-flight requests for up to 25 seconds, then exits. The ECS `stopTimeout` must be at least 30 seconds.
 
 ## Developer tooling
 
