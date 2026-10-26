@@ -58,7 +58,8 @@ tally-aloft-backend/
     ├── unit/domain/
     ├── unit/application/
     ├── integration/          # outbound adapters against real Postgres and Valkey
-    └── api/                  # HTTP requests through the full app
+    ├── api/                  # HTTP requests through the full app
+    └── tooling/              # static checks of the repository's own configuration
 ```
 
 The named packages are the ones the core needs. Everything shown as `<domain>` or `<technology>` is added when a feature needs it.
@@ -272,9 +273,10 @@ name = "Domain and application have no framework or vendor code"
 type = "forbidden"
 source_modules = ["tally_aloft.domain", "tally_aloft.application"]
 forbidden_modules = [
-    "fastapi", "starlette", "pydantic", "pydantic_settings", "sqlalchemy",
-    "asyncpg", "redis", "taskiq", "aiohttp", "aiobotocore", "pydantic_ai",
-    "typst", "cryptography", "rfc8785", "jwt", "logfire",
+    "fastapi", "starlette", "uvicorn", "pydantic", "pydantic_settings",
+    "sqlalchemy", "asyncpg", "alembic", "redis", "taskiq", "taskiq_redis",
+    "aiohttp", "aiobotocore", "pydantic_ai", "typst", "cryptography",
+    "rfc8785", "jwt", "logfire", "opentelemetry",
 ]
 ```
 
@@ -284,7 +286,7 @@ How the two level contracts divide the work:
 - **Across packages**, a use case can't reach up into a higher domain's rules. Import Linter can't mix independent (`|`) and connected (`:`) modules on one line, so this contract can't stop a use case from reading a same-level domain's types; review covers that rule. The contract also has no containers, so it can't be exhaustive: check that each new domain was added to it.
 - **Ports sit on the bottom line** of the cross-package contract, so a port module that imports a domain's rules fails CI. `registry.py` isn't listed, and nothing in a level imports it.
 
-When a new vendor library is adopted, add it to the forbidden list.
+When a new vendor library is adopted, add it to the forbidden list. Import Linter fails on a forbidden package that isn't installed, so the list in `pyproject.toml` holds only installed packages, including transitive ones such as `starlette`, `aiohttp` and `opentelemetry`. The block above is the target list.
 
 ## Conventions
 
