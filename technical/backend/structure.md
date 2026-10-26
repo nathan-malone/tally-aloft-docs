@@ -19,7 +19,7 @@ tally-aloft-backend/
 ├── pyproject.toml            # dependencies, Ruff, Pyrefly, Import Linter config
 ├── uv.lock
 ├── alembic.ini
-├── compose.yaml              # local Postgres and Valkey; profile `app` runs every process in containers
+├── compose.yaml              # local Postgres and Valkey (added with their stories); profile `app` runs every process in containers
 ├── Dockerfile                # one image; API, worker and scheduler differ by command
 ├── .github/workflows/        # CI and deploy
 ├── openapi.json              # committed API schema; CI checks it's current
@@ -176,8 +176,8 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | Idempotency | `application/shared/idempotency.py`; `uow.idempotency`; table `idempotency_keys` | See [Idempotency](#idempotency) below. |
 | Concurrent edits | The use case; the entry's head row | The use case locks the head row (`SELECT … FOR UPDATE`), compares `base_version` with the current version, and raises `version_conflict` if they differ. |
 | Job status | `application/shared/get_job_status.py`, route `GET /jobs/{id}` (tag `jobs`) | Returns status and, when done, a presigned download URL for any file the job produced. |
-| Error shape | `domain/shared/errors.py`, `application/shared/errors.py`, `adapters/inbound/http/errors.py` | Every domain error declares a stable `code`. Errors that aren't about the domain (authentication, entitlement, idempotency reuse, rate limits, unsupported client) live in `application/shared/errors.py`, also with codes. The HTTP adapter maps each to a status and the shared body `{code, message, details}`. It overrides FastAPI's `RequestValidationError` handler and 422 schema so validation errors use the same body, and routers declare their error responses so the schema documents them. |
-| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`, the outermost middleware that can produce a response, so it also covers rejected requests. Only Uvicorn's proxy-headers wrapper, which never responds, sits outside it. `create_app` passes its middleware to `FastAPI(middleware=[...])` as one list, outermost first. Origins come from settings, and the headers are those listed in the client contract. |
+| Error shape | `domain/shared/errors.py`, `application/shared/errors.py`, `adapters/inbound/http/errors.py` | Every domain error declares a stable `code`. `DomainError` and `ApplicationError` both derive from `CodedError` in `domain/shared/errors.py`, which checks at class definition that each concrete error sets its own string `code` (a `TypeError` otherwise), so no two errors share one by inheritance. A base that only groups other errors is declared with `abstract=True` and needs none. Errors that aren't about the domain (authentication, entitlement, idempotency reuse, rate limits, unsupported client) live in `application/shared/errors.py`, also with codes. The HTTP adapter maps each to a status and the shared body `{code, message, details}`. It overrides FastAPI's `RequestValidationError` handler and 422 schema so validation errors use the same body, and routers declare their error responses so the schema documents them. |
+| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`, the outermost user middleware that can produce a response, so it also covers rejected requests. Only Uvicorn's proxy-headers wrapper, which never responds, sits outside it among the user middleware. `create_app` passes its user middleware to `FastAPI(middleware=[...])` as one list, outermost first. Starlette always wraps the whole list in its own `ServerErrorMiddleware`, whose 500 responses carry no CORS headers, so unhandled errors are caught by a middleware inside CORS. Origins come from settings, and the headers are those listed in the client contract. |
 
 ### Idempotency
 
