@@ -19,7 +19,7 @@ tally-aloft-backend/
 ├── pyproject.toml            # dependencies, Ruff, Pyrefly, Import Linter config
 ├── uv.lock
 ├── alembic.ini
-├── compose.yaml              # local Postgres and Valkey
+├── compose.yaml              # local Postgres and Valkey; profile `app` runs every process in containers
 ├── Dockerfile                # one image; API, worker and scheduler differ by command
 ├── .github/workflows/        # CI and deploy
 ├── openapi.json              # committed API schema; CI checks it's current
