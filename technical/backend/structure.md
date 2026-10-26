@@ -55,8 +55,10 @@ tally-aloft-backend/
 └── tests/
     ├── fakes/                # in-memory implementations of every port
     ├── contracts/            # one suite per stateful port, run against the fake and the real adapter
+    ├── support/              # test-only apps, routes and helpers; never shipped
     ├── unit/domain/
     ├── unit/application/
+    ├── unit/bootstrap/       # settings and wiring
     ├── integration/          # outbound adapters against real Postgres and Valkey
     ├── api/                  # HTTP requests through the full app
     └── tooling/              # static checks of the repository's own configuration
@@ -97,7 +99,13 @@ Entities, value objects and pure functions, written as frozen dataclasses and pl
 
 ### `bootstrap/` — wiring
 
-- `settings.py` is the only module that reads configuration. Settings come from the environment only, with a test profile for the test suite and a `Settings.for_schema_export()` profile that needs no secrets.
+- `settings.py` is the only module that reads configuration.
+  - **Source.** Settings come from environment variables only, all prefixed `TALLY_`. Unknown `TALLY_` variables are ignored.
+  - **Environments.** `TALLY_ENVIRONMENT` is one of `development`, `test`, `staging` or `production`.
+  - **Formats.** Durations are integer seconds, lists are comma-separated, and maps are JSON.
+  - **`.env` files.** For local development, a git-ignored `.env` file, copied from the committed `.env.example`, is loaded by the entry command (`uv run --env-file .env …`), never by `Settings`, and the image contains none.
+  - **Startup errors.** Entry points call `load_settings()`. On a missing or invalid variable, it exits with one line that names each failing variable and its error type. The line is built from each error's location and type, never from `str(ValidationError)`, so no value appears in it. Secret settings use `SecretStr`.
+  - **Test and export profiles.** `Settings.for_tests(**values)` is the test suite's profile, and `Settings.for_schema_export()` needs no variables or secrets. Neither reads the process environment, so a developer's shell can't change them.
 - `app.py` defines `create_app(settings, overrides=None)`. It registers routers and middleware and nothing else; it opens no connection and builds no adapter, because an aiohttp `ClientSession` can only be created while the event loop is running. The FastAPI lifespan then creates the engine, the HTTP session and the broker connection (`broker.startup()`), calls `container.build_use_cases(...)`, and sets `app.state.use_cases`. API tests pass fakes through `overrides`.
 - `container.py` builds every adapter and the `UseCases` registry from those resources. It also defines `register_tasks(broker)`, which registers the task functions and schedules from `adapters/inbound/jobs` (`broker.register_task`).
   - `worker.py` calls `register_tasks` when it's imported, not at startup. The scheduler process never runs worker startup handlers, so registering at startup would leave it with no schedules.
@@ -168,7 +176,7 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | Concurrent edits | The use case; the entry's head row | The use case locks the head row (`SELECT … FOR UPDATE`), compares `base_version` with the current version, and raises `version_conflict` if they differ. |
 | Job status | `application/shared/get_job_status.py`, route `GET /jobs/{id}` (tag `jobs`) | Returns status and, when done, a presigned download URL for any file the job produced. |
 | Error shape | `domain/shared/errors.py`, `application/shared/errors.py`, `adapters/inbound/http/errors.py` | Every domain error declares a stable `code`. Errors that aren't about the domain (authentication, entitlement, idempotency reuse, rate limits, unsupported client) live in `application/shared/errors.py`, also with codes. The HTTP adapter maps each to a status and the shared body `{code, message, details}`. It overrides FastAPI's `RequestValidationError` handler and 422 schema so validation errors use the same body, and routers declare their error responses so the schema documents them. |
-| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`, added last so it is the outermost middleware and also covers rejected requests. Origins come from settings, and the headers are those listed in the client contract. |
+| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`, the outermost middleware that can produce a response, so it also covers rejected requests. Only Uvicorn's proxy-headers wrapper, which never responds, sits outside it. `create_app` passes its middleware to `FastAPI(middleware=[...])` as one list, outermost first. Origins come from settings, and the headers are those listed in the client contract. |
 
 ### Idempotency
 
