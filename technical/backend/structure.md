@@ -18,8 +18,12 @@ The cost is extra code: database tables are mapped to domain objects, and each e
 tally-aloft-backend/
 ├── pyproject.toml            # dependencies, Ruff, Pyrefly, Import Linter config
 ├── uv.lock
+├── package.json              # npm developer tools (aislop); pnpm-lock.yaml locks them
+├── pnpm-workspace.yaml       # pnpm settings: the 7-day minimum release age
+├── .aislop/config.yml        # the AI-slop check
+├── Makefile                  # every developer and CI command
 ├── alembic.ini
-├── compose.yaml              # local Postgres and Valkey
+├── compose.yaml              # local Postgres and Valkey (added with their stories); profile `app` runs every process in containers
 ├── Dockerfile                # one image; API, worker and scheduler differ by command
 ├── .github/workflows/        # CI and deploy
 ├── openapi.json              # committed API schema; CI checks it's current
@@ -55,10 +59,14 @@ tally-aloft-backend/
 └── tests/
     ├── fakes/                # in-memory implementations of every port
     ├── contracts/            # one suite per stateful port, run against the fake and the real adapter
+    ├── support/              # test-only apps, routes and helpers; never shipped
     ├── unit/domain/
     ├── unit/application/
+    ├── unit/bootstrap/       # settings and wiring
     ├── integration/          # outbound adapters against real Postgres and Valkey
-    └── api/                  # HTTP requests through the full app
+    ├── api/                  # HTTP requests through the full app
+    ├── image/                # the built image and its commands, in Docker
+    └── tooling/              # static checks of the repository's own configuration
 ```
 
 The named packages are the ones the core needs. Everything shown as `<domain>` or `<technology>` is added when a feature needs it.
@@ -96,7 +104,13 @@ Entities, value objects and pure functions, written as frozen dataclasses and pl
 
 ### `bootstrap/` — wiring
 
-- `settings.py` is the only module that reads configuration. Settings come from the environment only, with a test profile for the test suite and a `Settings.for_schema_export()` profile that needs no secrets.
+- `settings.py` is the only module that reads configuration.
+  - **Source.** Settings come from environment variables only, all prefixed `TALLY_`. Unknown `TALLY_` variables are ignored.
+  - **Environments.** `TALLY_ENVIRONMENT` is one of `development`, `test`, `staging` or `production`.
+  - **Formats.** Durations are integer seconds, lists are comma-separated, and maps are JSON.
+  - **`.env` files.** For local development, a git-ignored `.env` file, copied from the committed `.env.example`, is loaded by the entry command (`uv run --env-file .env …`), never by `Settings`, and the image contains none.
+  - **Startup errors.** Entry points call `load_settings()`. On a missing or invalid variable, it exits with one line that names each failing variable and its error type. The line is built from each error's location and type, never from `str(ValidationError)`, so no value appears in it. Secret settings use `SecretStr`.
+  - **Test and export profiles.** `Settings.for_tests(**values)` is the test suite's profile, and `Settings.for_schema_export()` needs no variables or secrets. Neither reads the process environment, so a developer's shell can't change them.
 - `app.py` defines `create_app(settings, overrides=None)`. It registers routers and middleware and nothing else; it opens no connection and builds no adapter, because an aiohttp `ClientSession` can only be created while the event loop is running. The FastAPI lifespan then creates the engine, the HTTP session and the broker connection (`broker.startup()`), calls `container.build_use_cases(...)`, and sets `app.state.use_cases`. API tests pass fakes through `overrides`.
 - `container.py` builds every adapter and the `UseCases` registry from those resources. It also defines `register_tasks(broker)`, which registers the task functions and schedules from `adapters/inbound/jobs` (`broker.register_task`).
   - `worker.py` calls `register_tasks` when it's imported, not at startup. The scheduler process never runs worker startup handlers, so registering at startup would leave it with no schedules.
@@ -166,8 +180,8 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | Idempotency | `application/shared/idempotency.py`; `uow.idempotency`; table `idempotency_keys` | See [Idempotency](#idempotency) below. |
 | Concurrent edits | The use case; the entry's head row | The use case locks the head row (`SELECT … FOR UPDATE`), compares `base_version` with the current version, and raises `version_conflict` if they differ. |
 | Job status | `application/shared/get_job_status.py`, route `GET /jobs/{id}` (tag `jobs`) | Returns status and, when done, a presigned download URL for any file the job produced. |
-| Error shape | `domain/shared/errors.py`, `application/shared/errors.py`, `adapters/inbound/http/errors.py` | Every domain error declares a stable `code`. Errors that aren't about the domain (authentication, entitlement, idempotency reuse, rate limits, unsupported client) live in `application/shared/errors.py`, also with codes. The HTTP adapter maps each to a status and the shared body `{code, message, details}`. It overrides FastAPI's `RequestValidationError` handler and 422 schema so validation errors use the same body, and routers declare their error responses so the schema documents them. |
-| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`, added last so it is the outermost middleware and also covers rejected requests. Origins come from settings, and the headers are those listed in the client contract. |
+| Error shape | `domain/shared/errors.py`, `application/shared/errors.py`, `adapters/inbound/http/errors.py` | Every domain error declares a stable `code`. `DomainError` and `ApplicationError` both derive from `CodedError` in `domain/shared/errors.py`, which checks at class definition that each concrete error sets its own string `code` (a `TypeError` otherwise), so no two errors share one by inheritance. A base that only groups other errors is declared with `abstract=True` and needs none. Errors that aren't about the domain (authentication, entitlement, idempotency reuse, rate limits, unsupported client) live in `application/shared/errors.py`, also with codes. The HTTP adapter maps each to a status and the shared body `{code, message, details}`. It overrides FastAPI's `RequestValidationError` handler and 422 schema so validation errors use the same body, and routers declare their error responses so the schema documents them. |
+| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`, the outermost user middleware that can produce a response, so it also covers rejected requests. Only Uvicorn's proxy-headers wrapper, which never responds, sits outside it among the user middleware. `create_app` passes its user middleware to `FastAPI(middleware=[...])` as one list, outermost first. Starlette always wraps the whole list in its own `ServerErrorMiddleware`, whose 500 responses carry no CORS headers, so unhandled errors are caught by a middleware inside CORS. Origins come from settings, and the headers are those listed in the client contract. |
 
 ### Idempotency
 
@@ -211,7 +225,9 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | `unit/application` | Use cases, including authorization, with a denied case for each use case | Fakes from `tests/fakes/` |
 | `contracts` | That each stateful fake (repositories, object store, job queue) behaves like its real adapter | One suite per port, parametrized over the fake and the real adapter |
 | `integration` | Postgres and Valkey adapters, migrations, and the concurrency guarantees: <br>• two concurrent requests with one key produce one write <br>• a duplicate or late delivery doesn't run a job twice <br>• expired leases are recovered <br>• the sweeper re-dispatches a job that was never dispatched <br>• the application role can't update or delete audit rows | testcontainers. Migrations run as the owner role; tests connect as the application role. |
-| `api` | Routing, auth, error mapping, schemas, client-version rejection, idempotent replay, version conflicts | The full app, with outbound adapters replaced by fakes through `overrides` |
+| `api` | Routing, auth, error mapping, schemas, client-version rejection, idempotent replay, version conflicts, and the API process started on the host | The full app, with outbound adapters replaced by fakes through `overrides` |
+| `image` | The release image: its user, size and contents, proxy trust, and shutdown on `SIGTERM` | Docker, marked `container`. Tests run the image's own default command and swap only the app path for `tests.support.probe_app:app`, with `tests/` mounted read-only, so test-only routes reach the real server flags while the image ships no tests. The one exception is the exit-on-`SIGTERM` test, which also shortens `--timeout-graceful-shutdown` to 2 seconds so it doesn't wait out the 25-second drain; the default-command test pins the real value. CI passes its built image in `BACKEND_TEST_IMAGE`. |
+| `tooling` | The repository's configuration: the Ruff, Pyrefly and aislop policies, the Import Linter contracts, the lockfiles, the `Dockerfile`, `compose.yaml`, the `Makefile`, the CI workflow and the settings list | Plain pytest over the files, plus the tools themselves on probe inputs |
 
 `tests/fakes/__init__.py` assigns each fake to a variable typed as its Protocol, so Pyrefly fails when a fake drifts from its port. Vendor adapters get opt-in tests against sandbox accounts, outside the default pull-request run.
 
@@ -272,9 +288,10 @@ name = "Domain and application have no framework or vendor code"
 type = "forbidden"
 source_modules = ["tally_aloft.domain", "tally_aloft.application"]
 forbidden_modules = [
-    "fastapi", "starlette", "pydantic", "pydantic_settings", "sqlalchemy",
-    "asyncpg", "redis", "taskiq", "aiohttp", "aiobotocore", "pydantic_ai",
-    "typst", "cryptography", "rfc8785", "jwt", "logfire",
+    "fastapi", "starlette", "uvicorn", "pydantic", "pydantic_settings",
+    "sqlalchemy", "asyncpg", "alembic", "redis", "taskiq", "taskiq_redis",
+    "aiohttp", "aiobotocore", "pydantic_ai", "typst", "cryptography",
+    "rfc8785", "jwt", "logfire", "opentelemetry",
 ]
 ```
 
@@ -284,7 +301,7 @@ How the two level contracts divide the work:
 - **Across packages**, a use case can't reach up into a higher domain's rules. Import Linter can't mix independent (`|`) and connected (`:`) modules on one line, so this contract can't stop a use case from reading a same-level domain's types; review covers that rule. The contract also has no containers, so it can't be exhaustive: check that each new domain was added to it.
 - **Ports sit on the bottom line** of the cross-package contract, so a port module that imports a domain's rules fails CI. `registry.py` isn't listed, and nothing in a level imports it.
 
-When a new vendor library is adopted, add it to the forbidden list.
+When a new vendor library is adopted, add it to the forbidden list. Import Linter fails on a forbidden package that isn't installed, so the list in `pyproject.toml` holds only installed packages, including transitive ones such as `starlette`, `aiohttp` and `opentelemetry`. The block above is the target list.
 
 ## Conventions
 
