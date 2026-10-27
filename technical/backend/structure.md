@@ -86,7 +86,7 @@ Entities, value objects and pure functions, written as frozen dataclasses and pl
 - **Unit of work.** Use cases receive a unit-of-work factory, never individual repositories: `async with self.uow() as uow:` exposes that domain's repositories (for example `uow.flights`, plus the shared `uow.idempotency` and `uow.jobs`), all on one database session and one transaction. Nothing inside a unit of work runs concurrently with `asyncio.gather`, because a session isn't safe to share between tasks.
 - **Ports come in two kinds.**
   - **Domain ports** live with their domain, in `application/<domain>/ports.py`: that domain's repositories, read-side query services and unit-of-work Protocol.
-  - **Cross-cutting ports** live in `application/ports/`, one module per capability, named by capability rather than technology. `Clock`, `JobQueue` and `TokenVerifier` exist from the start. Others, such as `ObjectStore`, `Signer`, `EmailSender` or `RateLimiter`, are added with the features that need them. These modules import only `domain.shared` and `application.shared`, and `ports/__init__.py` re-exports nothing.
+  - **Cross-cutting ports** live in `application/ports/`, one module per capability, named by capability rather than technology. `Clock`, `JobQueue`, `TokenVerifier` and `DependencyCheck` exist from the start. `DependencyCheck` (`ports/health.py`) has a `name` and an async `check()` that raises when its dependency doesn't work; each data store's outbound adapter supplies one, and `UseCases.check_readiness` runs them for `GET /readyz`. Others, such as `ObjectStore`, `Signer`, `EmailSender` or `RateLimiter`, are added with the features that need them. These modules import only `domain.shared` and `application.shared`, and `ports/__init__.py` re-exports nothing.
   - Keeping domain ports out of `application/ports/` matters: Import Linter follows indirect imports, so a shared ports module that mentioned every domain would let any use case reach upward through it.
 - **Reads.** List endpoints don't load aggregates. Query services, such as a `FlightQueries` for the logbook list, return read models one page at a time with keyset cursors (`Page[T]` in `application/shared`). The Postgres adapter implements them with SQLAlchemy Core.
   - Entries are append-only versions, so a head row per entry points at its current version, and lists read only current versions.
@@ -97,7 +97,7 @@ Entities, value objects and pure functions, written as frozen dataclasses and pl
 ### `adapters/` — the outside world
 
 - **Inbound** adapters translate an outside event into a use-case call.
-  - `http/` holds FastAPI routers grouped by domain, Pydantic request and response schemas, the authentication dependency, the client-version middleware, error mapping and webhook receivers. Routers get `UseCases` from `request.app.state`.
+  - `http/` holds FastAPI routers grouped by domain, Pydantic request and response schemas, the authentication dependency, the client-version middleware, error mapping and webhook receivers. Routers get `UseCases` from `request.app.state` through one typed dependency, the `UseCasesDep` parameter annotation in `http/dependencies.py`.
   - `jobs/` holds Taskiq tasks as plain async functions plus the schedule list. Tasks read `UseCases` from Taskiq's worker state through `TaskiqDepends`.
 - **Outbound** adapters implement ports with a specific technology and are named after it: `PostgresFlightRepository`, `S3ObjectStore`, `KmsSigner`. SQLAlchemy table models live only in `outbound/postgres/tables/`, with mappers to and from domain objects. One `PostgresUnitOfWork` implements every domain's unit-of-work Protocol. Vendor-specific schemas, such as a vendor's webhook payload or response models, stay inside that vendor's adapter. Adapters that do CPU-bound work run it in a thread or process pool, never on the event loop.
 - Adapters never import each other. Shared resources, such as the aiohttp `ClientSession` and the Taskiq broker, are created by bootstrap and passed into adapter constructors.
@@ -207,7 +207,7 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | A new operation a client can perform | `application/<domain>/<verb>.py`, then add it to `UseCases` |
 | A repository or query service | Its Protocol in `application/<domain>/ports.py`; the Postgres implementation in `adapters/outbound/postgres/`; a fake in `tests/fakes/` |
 | A list endpoint | A query service returning `Page[T]`, not a repository |
-| An endpoint | `adapters/inbound/http/<domain>.py`, calling a use case |
+| An endpoint | `adapters/inbound/http/<domain>.py`, calling a use case through a `UseCasesDep` parameter |
 | A write endpoint | Also takes the `Idempotency-Key` header; the use case wraps its change in `run_once`. An update also takes `base_version`. |
 | A background or scheduled job | A job row from the use case; the task in `adapters/inbound/jobs/`, registered in bootstrap |
 | A new external service | A port in `application/ports/`, an adapter in `adapters/outbound/<technology>/`, wiring in `bootstrap/container.py`, and a fake in `tests/fakes/`. Add a suite in `tests/contracts/` when the fake holds state. |
