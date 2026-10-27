@@ -12,6 +12,7 @@ tally-aloft-clients/
 ├── pnpm-workspace.yaml      # apps/*, packages/*, and the version catalog
 ├── turbo.json               # task graph and caching
 ├── biome.json               # lint and format for the whole repo
+├── .aislop/config.yml       # the AI-slop check for the whole repo
 ├── .github/workflows/       # CI, web and site deploys, mobile builds
 ├── docs/
 ├── apps/
@@ -282,6 +283,7 @@ Each app has its own `shared/ui`; they share tokens and a vocabulary, not code.
 | No undeclared dependencies | Biome `noUndeclaredDependencies`, with pnpm's isolated layout as backup |
 | Generated API code is current | `codegen:check` in CI |
 | Lint and format | Biome |
+| Patterns AI coding agents leave behind | aislop (`make slop.check`) |
 
 ```ts
 // apps/web/steiger.config.ts (mobile is the same)
@@ -319,4 +321,4 @@ The drafts module has a required test: an attempt whose response is lost, follow
 
 ## CI
 
-On every pull request: `turbo run //#lint typecheck steiger test codegen:check`, then Playwright against a production build of the web app. Merges to `main` deploy the web app and the site to their S3 buckets and CloudFront distributions, and run EAS builds for mobile. Store releases and over-the-air updates are triggered by tags; the update job pulls EAS environment variables, publishes the update and uploads its source maps to Sentry.
+On every pull request: `turbo run //#lint typecheck steiger test codegen:check`, the AI-slop check (`aislop ci`), then Playwright against a production build of the web app. When the repository is set up, its `Makefile` will wrap these tasks, and CI will call one make target per check and an end-to-end target, so the README, `CLAUDE.md` and CI share one copy of each command (see [make commands](../make-commands.md)). Merges to `main` deploy the web app and the site to their S3 buckets and CloudFront distributions, and run EAS builds for mobile. Store releases and over-the-air updates are triggered by tags; the update job pulls EAS environment variables, publishes the update and uploads its source maps to Sentry.

@@ -18,6 +18,10 @@ The cost is extra code: database tables are mapped to domain objects, and each e
 tally-aloft-backend/
 ├── pyproject.toml            # dependencies, Ruff, Pyrefly, Import Linter config
 ├── uv.lock
+├── package.json              # npm developer tools (aislop); pnpm-lock.yaml locks them
+├── pnpm-workspace.yaml       # pnpm settings: the 7-day minimum release age
+├── .aislop/config.yml        # the AI-slop check
+├── Makefile                  # every developer and CI command
 ├── alembic.ini
 ├── compose.yaml              # local Postgres and Valkey (added with their stories); profile `app` runs every process in containers
 ├── Dockerfile                # one image; API, worker and scheduler differ by command
@@ -222,8 +226,8 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | `contracts` | That each stateful fake (repositories, object store, job queue) behaves like its real adapter | One suite per port, parametrized over the fake and the real adapter |
 | `integration` | Postgres and Valkey adapters, migrations, and the concurrency guarantees: <br>• two concurrent requests with one key produce one write <br>• a duplicate or late delivery doesn't run a job twice <br>• expired leases are recovered <br>• the sweeper re-dispatches a job that was never dispatched <br>• the application role can't update or delete audit rows | testcontainers. Migrations run as the owner role; tests connect as the application role. |
 | `api` | Routing, auth, error mapping, schemas, client-version rejection, idempotent replay, version conflicts, and the API process started on the host | The full app, with outbound adapters replaced by fakes through `overrides` |
-| `image` | The release image: its user, size and contents, proxy trust, and shutdown on `SIGTERM` | Docker, marked `container`. Tests run the image's own default command and swap only the app path for `tests.support.probe_app:app`, with `tests/` mounted read-only, so test-only routes reach the real server flags while the image ships no tests. CI passes its built image in `BACKEND_TEST_IMAGE`. |
-| `tooling` | The repository's configuration: the Ruff and Pyrefly policies, the Import Linter contracts, the lockfile, the `Dockerfile`, `compose.yaml`, the CI workflow and the settings list | Plain pytest over the files, plus the tools themselves on probe inputs |
+| `image` | The release image: its user, size and contents, proxy trust, and shutdown on `SIGTERM` | Docker, marked `container`. Tests run the image's own default command and swap only the app path for `tests.support.probe_app:app`, with `tests/` mounted read-only, so test-only routes reach the real server flags while the image ships no tests. The one exception is the exit-on-`SIGTERM` test, which also shortens `--timeout-graceful-shutdown` to 2 seconds so it doesn't wait out the 25-second drain; the default-command test pins the real value. CI passes its built image in `BACKEND_TEST_IMAGE`. |
+| `tooling` | The repository's configuration: the Ruff, Pyrefly and aislop policies, the Import Linter contracts, the lockfiles, the `Dockerfile`, `compose.yaml`, the `Makefile`, the CI workflow and the settings list | Plain pytest over the files, plus the tools themselves on probe inputs |
 
 `tests/fakes/__init__.py` assigns each fake to a variable typed as its Protocol, so Pyrefly fails when a fake drifts from its port. Vendor adapters get opt-in tests against sandbox accounts, outside the default pull-request run.
 
