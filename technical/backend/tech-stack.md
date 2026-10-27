@@ -100,7 +100,7 @@ One backend API serves the web, iOS and Android clients. This document records w
     | `TALLY_CORS_ORIGINS` | comma-separated browser origins, each exactly a lowercase `scheme://host[:port]` without a path or default port; `*` is rejected | none | no; infra sets it to the web app's origins (`https://tallyaloft.app` in production) |
 
   - **Startup failure:** a missing or invalid setting stops the process before it serves, with exit code 1 and one line on stderr that names each variable and its error type, never its value.
-  - **Logs:** Uvicorn's access log on stdout carries each request's client address (after proxy handling), path and query string, so infra sets the retention of the log group that receives it. An unhandled error is logged to stderr with its type and stack trace. Until logging is configured with Logfire, those records come through Python's default handler, unformatted.
+  - **Logs:** Uvicorn's access log on stdout carries each request's client address (after proxy handling), path and query string, so infra sets the retention of the log group that receives it. An unhandled error is logged to stderr with its type, message and stack trace and the request's method and path. Until logging is configured with Logfire and those records are scrubbed, they come through Python's default handler, unformatted, and can hold personal data, such as a value that failed response validation, so stderr gets the same retention and access rules as the access log.
   - **Shutdown:** on `SIGTERM`, the API stops accepting connections and drains in-flight requests for up to 25 seconds, then exits. The ECS `stopTimeout` must be at least 30 seconds.
 
 ## Developer tooling
