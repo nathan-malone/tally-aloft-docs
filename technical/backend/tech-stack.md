@@ -98,6 +98,14 @@ One backend API serves the web, iOS and Android clients. This document records w
     | `TALLY_ENVIRONMENT` | `development`, `test`, `staging` or `production` | none | yes |
     | `TALLY_FORWARDED_ALLOW_IPS` | comma-separated addresses or CIDR networks; `*` and catch-all networks such as `0.0.0.0/0` are rejected | `127.0.0.1` | no; infra sets it to the load balancer's subnets |
     | `TALLY_CORS_ORIGINS` | comma-separated browser origins, each exactly as a browser sends it: a lowercase `scheme://host[:port]` without a path or default port, with an IP address in a browser's form (`[::1]`, `127.0.0.1`); `*` is rejected | none | no; infra sets it to the web app's origins (`https://tallyaloft.app` in production) |
+    | `TALLY_DATABASE_URL` | the application role's database, as a SQLAlchemy URL naming the driver: `postgresql+asyncpg://user:password@host:port/database`, with reserved characters (`@ : / % # ?`) in the user and password percent-encoded; secret | none | yes, for the API and worker |
+    | `TALLY_DATABASE_POOL_SIZE` | connections each process keeps open, at least 1 | `5` | no |
+    | `TALLY_DATABASE_MAX_OVERFLOW` | extra connections a process may open when its pool is busy, at least 0 | `5` | no |
+    | `TALLY_DATABASE_STATEMENT_TIMEOUT` | seconds before Postgres cancels a statement, at least 1 | `30` | no |
+    | `TALLY_MIGRATION_DATABASE_URL` | the owner role's database, in the same format; secret | none | yes, for the migration task only |
+    | `TALLY_MIGRATION_LOCK_TIMEOUT` | seconds a migration waits for a lock before it fails, at least 1 | `5` | no |
+
+    Infra sets the `TALLY_MIGRATION_*` variables on the migration task only; the API, worker and scheduler never get the owner role's credentials. Each API or worker process opens at most pool size plus overflow connections, 10 by default, so `max_connections` must cover that many per task, plus the migration task's one. TLS to RDS, including certificate verification, isn't settled yet: the infrastructure epic decides it with the database, and until then a `?ssl=require` in the URL encrypts without verifying the server.
 
   - **Startup failure:** a missing or invalid setting stops the process before it serves, with exit code 1 and one line on stderr that names each variable and its error type, never its value.
   - **Logs:** Uvicorn's access log on stdout carries each request's client address (after proxy handling), path and query string, so infra sets the retention of the log group that receives it. An unhandled error is logged to stderr with its type, message and stack trace and the request's method and path. Until logging is configured with Logfire and those records are scrubbed, they come through Python's default handler, unformatted, and can hold personal data, such as a value that failed response validation, so stderr gets the same retention and access rules as the access log.
