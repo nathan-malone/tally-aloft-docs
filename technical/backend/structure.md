@@ -26,8 +26,10 @@ tally-aloft-backend/
 ├── pnpm-workspace.yaml       # pnpm settings: the 7-day minimum release age
 ├── .aislop/config.yml        # the AI-slop check
 ├── Makefile                  # every developer and CI command
-├── alembic.ini
-├── compose.yaml              # local Postgres and Valkey (added with their stories); profile `app` runs every process in containers
+├── alembic.ini               # Alembic settings and the Ruff hooks for new revisions
+├── compose.yaml              # local Postgres and Valkey (added with their stories); profile `app` runs the migrations and every process in containers
+├── compose/
+│   └── postgres-init.sql     # creates the two login roles in local and test Postgres
 ├── Dockerfile                # one image; API, worker and scheduler differ by command
 ├── .github/workflows/        # CI and deploy
 ├── openapi.json              # committed API schema; CI checks it's current

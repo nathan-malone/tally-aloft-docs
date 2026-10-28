@@ -19,7 +19,7 @@ Make was chosen over listing raw commands, which had to be kept the same by hand
 - **One at a time.** `.NOTPARALLEL:` keeps the checks serial and in order even when `-j` is in `MAKEFLAGS`, so their output doesn't interleave.
 - **Check targets print a banner.** The recipe of each target that `check` or `check.fast` runs starts with `$(banner)`, defined as `$(info ==> $@)`, so the output of `make check` shows which check is running.
 - **Only the lock targets change the lockfile.** `packages.lock` and `packages.update` may rewrite it. Every other target installs or runs from the lockfile as it is and fails if it's stale (`uv run --locked`, `pnpm install --frozen-lockfile`, and `pnpm exec` under `verifyDepsBeforeRun: error`), as CI does. So `make check` never silently re-locks after a `pyproject.toml` edit.
-- **Variables come from the command line.** A target that takes input reads a variable set on the command line, as in `make test ARGS="-k settings"`. The `Makefile` assigns each one a default with `=`, not `?=`, so a same-named environment variable doesn't leak in. Windows machines often set `PLATFORM`, for example. The shared names are `ARGS` (extra arguments for the underlying tool) and `PACKAGE` (one package to act on).
+- **Variables come from the command line.** A target that takes input reads a variable set on the command line, as in `make test ARGS="-k settings"`. The `Makefile` assigns each one a default with `=`, not `?=`, so a same-named environment variable doesn't leak in. Windows machines often set `PLATFORM`, for example. The shared names are `ARGS` (extra arguments for the underlying tool) and `PACKAGE` (one package to act on). The backend also has `NAME`, a new migration's message.
 - **CI calls make targets only.** Every `run:` step in the CI workflow is a `make` target, and the workflow's tooling test checks that. Actions that install the toolchain itself, such as `setup-uv`, and checks that ship as an action, such as `oasdiff-action`, stay actions.
 - **Images don't use make.** A `Dockerfile` keeps its own build steps, such as `uv sync --locked --no-dev`, because they build the release image rather than a developer environment. The release image never contains make.
 - **Tests that run make clear its environment.** A tooling test that runs make removes `MAKEFLAGS`, `MFLAGS`, `MAKELEVEL` and `MAKEOVERRIDES` from the child's environment. Otherwise, under `make test`, the outer make's variables, such as `ARGS`, reach the inner one.
@@ -37,6 +37,8 @@ A target is `<noun>.<verb>` or `<noun>.<qualifier>.<verb>`: lowercase words join
 | `build` | Builds an artifact, such as an image or a bundle. |
 | `run` | Runs one process in the foreground on the host. |
 | `up`, `down` | Start and remove containers. |
+| `apply` | Applies pending changes to a running system, such as migrations to a database. |
+| `create` | Creates a file from a template, such as a migration revision. |
 
 `help`, `test` and `check` are single words because they are used most. `.fast` marks a quicker variant of `test` or `check` that skips the slow or Docker-dependent part.
 
@@ -64,5 +66,5 @@ Every code repository has these targets, with the same meaning. The tool columns
 
 Targets that only one repository needs follow the same naming.
 
-- **Backend.** `image.build` builds the image, for a `PLATFORM` when one is given (CI passes `linux/arm64`). `api.run` runs the API on the host with reload, loading `.env` (see [Local development](backend/tech-stack.md#developer-tooling)). `containers.up` and `containers.down` start and remove the Compose `app` profile. `openapi.check` fails when the committed `openapi.json` differs from the API's schema, and `openapi.fix` writes it. Later stories add their processes and tools here, such as a `worker.run` or a `migrations.apply`, rather than documenting raw commands.
+- **Backend.** `image.build` builds the image, for a `PLATFORM` when one is given (CI passes `linux/arm64`). `api.run` runs the API on the host with reload, loading `.env` (see [Local development](backend/tech-stack.md#developer-tooling)). `containers.up` and `containers.down` start and remove the Compose `app` profile, and `containers.down ARGS=--volumes` deletes the data volumes too. `datastores.up` starts only the data stores, outside any profile, for the host loop, and waits until they are healthy. `migrations.apply` upgrades the database in `.env` to the latest migration, and `migrations.create NAME="..."` writes a new revision from the table models, failing without a `NAME`. `openapi.check` fails when the committed `openapi.json` differs from the API's schema, and `openapi.fix` writes it. Later stories add their processes and tools here, such as a `worker.run`, rather than documenting raw commands.
 - **Clients (proposed).** `codegen.check` for the `codegen:check` task, an end-to-end target for the Playwright run in CI, and a `run` target for each app, named when the repository is set up.
