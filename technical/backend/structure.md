@@ -16,8 +16,12 @@ The cost is extra code: database tables are mapped to domain objects, and each e
 
 ```
 tally-aloft-backend/
-├── pyproject.toml            # dependencies, Ruff, Pyrefly, Import Linter config
+├── pyproject.toml            # project metadata, dependencies and uv settings
 ├── uv.lock
+├── ruff.toml                 # Ruff lint and format settings
+├── pyrefly.toml              # Pyrefly type-check settings
+├── pytest.toml               # pytest settings
+├── .importlinter             # Import Linter contracts (INI)
 ├── package.json              # npm developer tools (aislop); pnpm-lock.yaml locks them
 ├── pnpm-workspace.yaml       # pnpm settings: the 7-day minimum release age
 ├── .aislop/config.yml        # the AI-slop check
@@ -133,7 +137,7 @@ Other domains are added as the product is designed. When one is proposed:
 - **Reference lower domains, never higher ones.** When a higher domain needs to point at lower-level data, it stores the lower record's ID. The lower domain never learns about the higher one. For example, anything that attests to a logbook entry references a specific entry version, so `logbook` never needs to know what refers to it.
 - **Place cross-domain operations and read models at the top.** An operation or read model that spans several domains lives in the highest domain it touches. A logbook list that shows signature status, for example, belongs to the domain that owns signatures. If it fits none of them, it gets its own domain above them all. Exporting or deleting a pilot's data, which touches every domain holding pilot data, is an example.
 - **Split by rules, not screens.** One screen can draw on several domains, and one domain can serve many screens.
-- **Update the contracts.** Add the domain to both level contracts in `pyproject.toml` (see Enforced boundaries) in the same pull request that creates its packages.
+- **Update the contracts.** Add the domain to both level contracts in `.importlinter` (see Enforced boundaries) in the same pull request that creates its packages.
 
 The levels as they stand today:
 
@@ -233,66 +237,83 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 
 ## Enforced boundaries
 
-These Import Linter contracts in `pyproject.toml` run in CI. A pull request that breaks one fails. The two domain-level contracts list the domains that exist today and grow as domains are added.
+These Import Linter contracts in `.importlinter` run in CI. A pull request that breaks one fails. The two domain-level contracts list the domains that exist today and grow as domains are added. The file is INI: each contract is an `importlinter:contract:<id>` section, and a list has one item per indented line.
 
-```toml
-[tool.importlinter]
-root_package = "tally_aloft"
+```ini
+[importlinter]
+root_package = tally_aloft
 include_external_packages = true
 
-[[tool.importlinter.contracts]]
-name = "Dependencies point inward"
-type = "layers"
-layers = [
-    "tally_aloft.main | tally_aloft.worker",
-    "tally_aloft.bootstrap",
-    "tally_aloft.adapters",
-    "tally_aloft.application",
-    "tally_aloft.domain",
-]
+[importlinter:contract:layers]
+name = Dependencies point inward
+type = layers
+layers =
+    tally_aloft.main | tally_aloft.worker
+    tally_aloft.bootstrap
+    tally_aloft.adapters
+    tally_aloft.application
+    tally_aloft.domain
 
 # Levels inside each package. Every domain has a package in both.
 # Same-level domains go on one line, separated by " | ".
-[[tool.importlinter.contracts]]
-name = "Domain levels within domain/ and application/"
-type = "layers"
-containers = ["tally_aloft.domain", "tally_aloft.application"]
-layers = [
-    "logbook | accounts",
-    "shared",
-]
+[importlinter:contract:domain-levels-within]
+name = Domain levels within domain/ and application/
+type = layers
+containers =
+    tally_aloft.domain
+    tally_aloft.application
+layers =
+    logbook | accounts
+    shared
 exhaustive = true
-exhaustive_ignores = ["ports", "registry"]
+exhaustive_ignores =
+    ports
+    registry
 
 # Levels across the two packages, so a use case can't reach up into a
 # higher domain's rules. Each line pairs a domain with its use cases;
 # same-level domains join the same line with " : ".
-[[tool.importlinter.contracts]]
-name = "Domain levels across domain/ and application/"
-type = "layers"
-layers = [
-    "tally_aloft.application.logbook : tally_aloft.domain.logbook : tally_aloft.application.accounts : tally_aloft.domain.accounts",
-    "tally_aloft.application.shared : tally_aloft.application.ports : tally_aloft.domain.shared",
-]
+[importlinter:contract:domain-levels-across]
+name = Domain levels across domain/ and application/
+type = layers
+layers =
+    tally_aloft.application.logbook : tally_aloft.domain.logbook : tally_aloft.application.accounts : tally_aloft.domain.accounts
+    tally_aloft.application.shared : tally_aloft.application.ports : tally_aloft.domain.shared
 
-[[tool.importlinter.contracts]]
-name = "Adapters are independent"
-type = "independence"
-modules = [
-    "tally_aloft.adapters.inbound.*",
-    "tally_aloft.adapters.outbound.*",
-]
+[importlinter:contract:adapters-independent]
+name = Adapters are independent
+type = independence
+modules =
+    tally_aloft.adapters.inbound.*
+    tally_aloft.adapters.outbound.*
 
-[[tool.importlinter.contracts]]
-name = "Domain and application have no framework or vendor code"
-type = "forbidden"
-source_modules = ["tally_aloft.domain", "tally_aloft.application"]
-forbidden_modules = [
-    "fastapi", "starlette", "uvicorn", "pydantic", "pydantic_settings",
-    "sqlalchemy", "asyncpg", "alembic", "redis", "taskiq", "taskiq_redis",
-    "aiohttp", "aiobotocore", "pydantic_ai", "typst", "cryptography",
-    "rfc8785", "jwt", "logfire", "opentelemetry",
-]
+[importlinter:contract:no-vendor-code]
+name = Domain and application have no framework or vendor code
+type = forbidden
+source_modules =
+    tally_aloft.domain
+    tally_aloft.application
+forbidden_modules =
+    fastapi
+    starlette
+    uvicorn
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    asyncpg
+    alembic
+    redis
+    taskiq
+    taskiq_redis
+    aiohttp
+    aiobotocore
+    pydantic_ai
+    typst
+    cryptography
+    rfc8785
+    jwt
+    logfire
+    opentelemetry
 ```
 
 How the two level contracts divide the work:
@@ -301,7 +322,7 @@ How the two level contracts divide the work:
 - **Across packages**, a use case can't reach up into a higher domain's rules. Import Linter can't mix independent (`|`) and connected (`:`) modules on one line, so this contract can't stop a use case from reading a same-level domain's types; review covers that rule. The contract also has no containers, so it can't be exhaustive: check that each new domain was added to it.
 - **Ports sit on the bottom line** of the cross-package contract, so a port module that imports a domain's rules fails CI. `registry.py` isn't listed, and nothing in a level imports it.
 
-When a new vendor library is adopted, add it to the forbidden list. Import Linter fails on a forbidden package that isn't installed, so the list in `pyproject.toml` holds only installed packages, including transitive ones such as `starlette`, `aiohttp` and `opentelemetry`. The block above is the target list.
+When a new vendor library is adopted, add it to the forbidden list. Import Linter fails on a forbidden package that isn't installed, so the list in `.importlinter` holds only installed packages, including transitive ones such as `starlette`, `aiohttp` and `opentelemetry`. The block above is the target list.
 
 ## Conventions
 
