@@ -322,7 +322,7 @@ How the two level contracts divide the work:
 - **Across packages**, a use case can't reach up into a higher domain's rules. Import Linter can't mix independent (`|`) and connected (`:`) modules on one line, so this contract can't stop a use case from reading a same-level domain's types; review covers that rule. The contract also has no containers, so it can't be exhaustive: check that each new domain was added to it.
 - **Ports sit on the bottom line** of the cross-package contract, so a port module that imports a domain's rules fails CI. `registry.py` isn't listed, and nothing in a level imports it.
 
-When a new vendor library is adopted, add it to the forbidden list. Import Linter fails on a forbidden package that isn't installed, so the list in `.importlinter` holds only installed packages, including transitive ones such as `starlette`, `aiohttp` and `opentelemetry`. The block above is the target list.
+When a new vendor library is adopted, add it to the forbidden list. With `include_external_packages = true`, Import Linter checks forbidden external modules that are present in the import graph; a listed package that is absent from the graph does not itself fail the lint. The list in `.importlinter` is the target list, including transitive packages such as `starlette`, `aiohttp` and `opentelemetry`.
 
 ## Conventions
 
