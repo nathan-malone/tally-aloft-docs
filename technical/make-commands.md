@@ -57,12 +57,12 @@ Every code repository has these targets, with the same meaning. The tool columns
 | `slop.check` | Patterns AI coding agents leave behind, such as narrative comments, swallowed exceptions and stub code. Fails on any finding. | aislop | aislop, once over the whole repository |
 | `test` | The full test suite that CI runs on each pull request. `ARGS` goes to the runner. | pytest, including the `container` tests | Vitest and Jest (the `test` task) |
 | `test.fast` | The tests that need no Docker or other slow setup. | pytest without the `container` tests | Same as `test` until there is a slow part |
-| `check` | Every `*.check` target, then `test`: what must pass before a commit. | `lint.check`, `types.check`, `boundaries.check`, `slop.check`, `test` | The same, plus `codegen.check` |
+| `check` | Every `*.check` target, then `test`: what must pass before a commit. | `lint.check`, `types.check`, `boundaries.check`, `slop.check`, `openapi.check`, `test` | The same, plus `codegen.check` |
 | `check.fast` | `check` with `test.fast` in place of `test`. | | |
 
 ## Repository targets
 
 Targets that only one repository needs follow the same naming.
 
-- **Backend.** `image.build` builds the image, for a `PLATFORM` when one is given (CI passes `linux/arm64`). `api.run` runs the API on the host with reload, loading `.env` (see [Local development](backend/tech-stack.md#developer-tooling)). `containers.up` and `containers.down` start and remove the Compose `app` profile. Later stories add their processes and tools here, such as a `worker.run`, a `migrations.apply` or an `openapi.check`, rather than documenting raw commands.
+- **Backend.** `image.build` builds the image, for a `PLATFORM` when one is given (CI passes `linux/arm64`). `api.run` runs the API on the host with reload, loading `.env` (see [Local development](backend/tech-stack.md#developer-tooling)). `containers.up` and `containers.down` start and remove the Compose `app` profile. `openapi.check` fails when the committed `openapi.json` differs from the API's schema, and `openapi.fix` writes it. Later stories add their processes and tools here, such as a `worker.run` or a `migrations.apply`, rather than documenting raw commands.
 - **Clients (proposed).** `codegen.check` for the `codegen:check` task, an end-to-end target for the Playwright run in CI, and a `run` target for each app, named when the repository is set up.

@@ -16,8 +16,12 @@ The cost is extra code: database tables are mapped to domain objects, and each e
 
 ```
 tally-aloft-backend/
-├── pyproject.toml            # dependencies, Ruff, Pyrefly, Import Linter config
+├── pyproject.toml            # project metadata, dependencies and uv settings
 ├── uv.lock
+├── ruff.toml                 # Ruff lint and format settings
+├── pyrefly.toml              # Pyrefly type-check settings
+├── pytest.toml               # pytest settings
+├── .importlinter             # Import Linter contracts (INI)
 ├── package.json              # npm developer tools (aislop); pnpm-lock.yaml locks them
 ├── pnpm-workspace.yaml       # pnpm settings: the 7-day minimum release age
 ├── .aislop/config.yml        # the AI-slop check
@@ -86,7 +90,7 @@ Entities, value objects and pure functions, written as frozen dataclasses and pl
 - **Unit of work.** Use cases receive a unit-of-work factory, never individual repositories: `async with self.uow() as uow:` exposes that domain's repositories (for example `uow.flights`, plus the shared `uow.idempotency` and `uow.jobs`), all on one database session and one transaction. Nothing inside a unit of work runs concurrently with `asyncio.gather`, because a session isn't safe to share between tasks.
 - **Ports come in two kinds.**
   - **Domain ports** live with their domain, in `application/<domain>/ports.py`: that domain's repositories, read-side query services and unit-of-work Protocol.
-  - **Cross-cutting ports** live in `application/ports/`, one module per capability, named by capability rather than technology. `Clock`, `JobQueue` and `TokenVerifier` exist from the start. Others, such as `ObjectStore`, `Signer`, `EmailSender` or `RateLimiter`, are added with the features that need them. These modules import only `domain.shared` and `application.shared`, and `ports/__init__.py` re-exports nothing.
+  - **Cross-cutting ports** live in `application/ports/`, one module per capability, named by capability rather than technology. `Clock`, `JobQueue`, `TokenVerifier` and `DependencyCheck` exist from the start. `DependencyCheck` (`ports/health.py`) has a `name` and an async `check()` that raises when its dependency doesn't work; each data store's outbound adapter supplies one, and `UseCases.check_readiness` runs them for `GET /readyz`. Others, such as `ObjectStore`, `Signer`, `EmailSender` or `RateLimiter`, are added with the features that need them. These modules import only `domain.shared` and `application.shared`, and `ports/__init__.py` re-exports nothing.
   - Keeping domain ports out of `application/ports/` matters: Import Linter follows indirect imports, so a shared ports module that mentioned every domain would let any use case reach upward through it.
 - **Reads.** List endpoints don't load aggregates. Query services, such as a `FlightQueries` for the logbook list, return read models one page at a time with keyset cursors (`Page[T]` in `application/shared`). The Postgres adapter implements them with SQLAlchemy Core.
   - Entries are append-only versions, so a head row per entry points at its current version, and lists read only current versions.
@@ -97,7 +101,7 @@ Entities, value objects and pure functions, written as frozen dataclasses and pl
 ### `adapters/` — the outside world
 
 - **Inbound** adapters translate an outside event into a use-case call.
-  - `http/` holds FastAPI routers grouped by domain, Pydantic request and response schemas, the authentication dependency, the client-version middleware, error mapping and webhook receivers. Routers get `UseCases` from `request.app.state`.
+  - `http/` holds FastAPI routers grouped by domain, Pydantic request and response schemas, the authentication dependency, the client-version middleware, error mapping and webhook receivers. Routers get `UseCases` from `request.app.state` through one typed dependency, the `UseCasesDep` parameter annotation in `http/dependencies.py`.
   - `jobs/` holds Taskiq tasks as plain async functions plus the schedule list. Tasks read `UseCases` from Taskiq's worker state through `TaskiqDepends`.
 - **Outbound** adapters implement ports with a specific technology and are named after it: `PostgresFlightRepository`, `S3ObjectStore`, `KmsSigner`. SQLAlchemy table models live only in `outbound/postgres/tables/`, with mappers to and from domain objects. One `PostgresUnitOfWork` implements every domain's unit-of-work Protocol. Vendor-specific schemas, such as a vendor's webhook payload or response models, stay inside that vendor's adapter. Adapters that do CPU-bound work run it in a thread or process pool, never on the event loop.
 - Adapters never import each other. Shared resources, such as the aiohttp `ClientSession` and the Taskiq broker, are created by bootstrap and passed into adapter constructors.
@@ -133,7 +137,7 @@ Other domains are added as the product is designed. When one is proposed:
 - **Reference lower domains, never higher ones.** When a higher domain needs to point at lower-level data, it stores the lower record's ID. The lower domain never learns about the higher one. For example, anything that attests to a logbook entry references a specific entry version, so `logbook` never needs to know what refers to it.
 - **Place cross-domain operations and read models at the top.** An operation or read model that spans several domains lives in the highest domain it touches. A logbook list that shows signature status, for example, belongs to the domain that owns signatures. If it fits none of them, it gets its own domain above them all. Exporting or deleting a pilot's data, which touches every domain holding pilot data, is an example.
 - **Split by rules, not screens.** One screen can draw on several domains, and one domain can serve many screens.
-- **Update the contracts.** Add the domain to both level contracts in `pyproject.toml` (see Enforced boundaries) in the same pull request that creates its packages.
+- **Update the contracts.** Add the domain to both level contracts in `.importlinter` (see Enforced boundaries) in the same pull request that creates its packages.
 
 The levels as they stand today:
 
@@ -174,14 +178,14 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 
 | Rule | Where | How |
 | --- | --- | --- |
-| Operation IDs | `adapters/inbound/http/operation_ids.py` | Each router is created with one tag: its domain (`tags=["logbook"]`), or for shared routes its capability (`tags=["jobs"]`). Endpoint functions are named by verb (`list_flights`). A `generate_unique_id_function` builds `logbook_list_flights`; `create_app` passes it to `FastAPI(...)`. Webhook and health routes use `include_in_schema=False`. |
-| Schema export | `scripts/export_openapi.py` | Builds the app with `Settings.for_schema_export()`, writes `openapi.json`, and fails on a route without a tag or a duplicate operation ID. CI re-runs it and fails on a diff, then runs oasdiff against every supported client release's schema. |
+| Operation IDs | `adapters/inbound/http/operation_ids.py` | Each router is created with one tag: its domain (`tags=["logbook"]`), or for shared routes its capability (`tags=["jobs"]`). Endpoint functions are named by verb (`list_flights`). `operation_id`, which `create_app` passes to `FastAPI(generate_unique_id_function=...)`, builds `logbook_list_flights` from the route's one tag and its endpoint function's name, never a `name=` override, which only `url_for` should see. Tags are strings (a `StrEnum` member is one). FastAPI also calls it for routes outside the schema, for routes without exactly one tag and for plain `Enum` tags, so it never raises: those get FastAPI's default ID, and the schema check reports any that are in the schema. Webhook and health routes use `include_in_schema=False`. |
+| Schema export | `scripts/export_openapi.py` | Builds the app with `Settings.for_schema_export()`, runs `check_schema` from `operation_ids.py`, and writes `openapi.json` with sorted keys, two-space indents, LF line endings (pinned in `.gitattributes`) and a trailing newline. `check_schema` reads the generated schema and fails, naming each route, on a route without exactly one tag, with an operation ID that doesn't start with its tag, or with an operation ID another route shares. `make openapi.fix` writes the file, and `make openapi.check`, part of `make check` and CI, fails when the committed file differs from the export. CI then runs oasdiff against every supported client release's schema. |
 | Client versions | `adapters/inbound/http/client_version.py` | Middleware reads `X-Client-Platform` and `X-Client-Version` and compares them with a `ClientVersionPolicy` (minimum version per platform) that bootstrap builds from settings. It returns the `400` `client_version_unsupported` response itself, because exceptions raised in middleware don't reach FastAPI's exception handlers. Webhook routes are exempt. |
 | Idempotency | `application/shared/idempotency.py`; `uow.idempotency`; table `idempotency_keys` | See [Idempotency](#idempotency) below. |
 | Concurrent edits | The use case; the entry's head row | The use case locks the head row (`SELECT … FOR UPDATE`), compares `base_version` with the current version, and raises `version_conflict` if they differ. |
 | Job status | `application/shared/get_job_status.py`, route `GET /jobs/{id}` (tag `jobs`) | Returns status and, when done, a presigned download URL for any file the job produced. |
-| Error shape | `domain/shared/errors.py`, `application/shared/errors.py`, `adapters/inbound/http/errors.py` | Every domain error declares a stable `code`. `DomainError` and `ApplicationError` both derive from `CodedError` in `domain/shared/errors.py`, which checks at class definition that each concrete error sets its own string `code` (a `TypeError` otherwise), so no two errors share one by inheritance. A base that only groups other errors is declared with `abstract=True` and needs none. Errors that aren't about the domain (authentication, entitlement, idempotency reuse, rate limits, unsupported client) live in `application/shared/errors.py`, also with codes. The HTTP adapter maps each to a status and the shared body `{code, message, details}`. It overrides FastAPI's `RequestValidationError` handler and 422 schema so validation errors use the same body, and routers declare their error responses so the schema documents them. |
-| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`, the outermost user middleware that can produce a response, so it also covers rejected requests. Only Uvicorn's proxy-headers wrapper, which never responds, sits outside it among the user middleware. `create_app` passes its user middleware to `FastAPI(middleware=[...])` as one list, outermost first. Starlette always wraps the whole list in its own `ServerErrorMiddleware`, whose 500 responses carry no CORS headers, so unhandled errors are caught by a middleware inside CORS. Origins come from settings, and the headers are those listed in the client contract. |
+| Error shape | `domain/shared/errors.py`, `application/shared/errors.py`, `adapters/inbound/http/errors.py` | **Errors carry codes.** `DomainError` and `ApplicationError` both derive from `CodedError` in `domain/shared/errors.py`, which checks at class definition that each concrete error sets its own string `code` (a `TypeError` otherwise), so no two errors share one by inheritance. A base that only groups other errors is declared with `abstract=True` and needs none. Errors that aren't about the domain (authentication, entitlement, idempotency reuse, rate limits, unsupported client) live in `application/shared/errors.py`, also with codes. Every `CodedError` takes one message, which is sent to clients as written, so it holds no internal detail and no other pilot's data.<br>**Use-case errors map by exact class.** The HTTP adapter maps each error to a status in `ERROR_STATUSES`, keyed by exact class rather than through inheritance, so every concrete error needs its own entry. A test imports every module, finds each concrete error, and fails on one without an entry. An unmapped error is re-raised and becomes a `500`.<br>**One body.** Every response is the shared body `{code, message, details}`, built only by `error_response`.<br>**Framework errors.** The adapter replaces FastAPI's handlers for `RequestValidationError` (`422 validation_failed`, with each error's location, message and type but never its input) and for Starlette's `HTTPException`: `HTTP_ERROR_CODES` names the 4xx codes the framework raises (`not_found`, `method_not_allowed`), any other 4xx is `http_error`, and any 5xx is `internal_error` with a fixed message.<br>**Unhandled errors.** Any other exception is caught by `UnhandledErrorMiddleware` (see CORS below), which returns `500 internal_error` with no exception text. It logs the exception's type, message and stack trace with the request's method and path, which can hold personal data until telemetry scrubbing is added. No middleware outside it sees the exception, so exception telemetry is recorded there.<br>**Schema.** `create_app` documents every route's 422 with the shared body, which keeps FastAPI's `HTTPValidationError` schema out of `openapi.json`, and routers declare their other error responses with `responses=error_responses(404, ...)`. |
+| CORS | `bootstrap/app.py` | Starlette's `CORSMiddleware`. `create_app` passes its user middleware to `FastAPI(middleware=[...])` as one list, outermost first, and a test checks the order:<br>1. Uvicorn's proxy-headers wrapper, which never responds and must set the client address before anything reads it.<br>2. `CORSMiddleware`, the outermost middleware that can produce a response, so its headers reach every response to an allowed origin, rejections included.<br>3. `UnhandledErrorMiddleware` from `adapters/inbound/http/errors.py`. Starlette always wraps the whole list in its own `ServerErrorMiddleware`, whose 500 responses carry no CORS headers, so unhandled errors are caught inside CORS instead.<br>4. Later middleware, such as the client-version check.<br>Origins come from `TALLY_CORS_ORIGINS`, each exactly as a browser sends it: a lowercase `scheme://host[:port]` without a default port, with an IP address in a browser's form (`[::1]`, `127.0.0.1`), because Starlette compares origins as exact strings; `*` is rejected. The allowed methods are `GET`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`, and the allowed request headers are those listed in the client contract, plus the CORS-safelisted `Accept`, `Accept-Language` and `Content-Language`, which Starlette always adds. Credentials aren't allowed, because clients authenticate with bearer tokens, not cookies. A rejected preflight keeps Starlette's plain-text `400`, the one exception to the shared error body, because browsers never expose a preflight response to the page. |
 
 ### Idempotency
 
@@ -207,14 +211,14 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | A new operation a client can perform | `application/<domain>/<verb>.py`, then add it to `UseCases` |
 | A repository or query service | Its Protocol in `application/<domain>/ports.py`; the Postgres implementation in `adapters/outbound/postgres/`; a fake in `tests/fakes/` |
 | A list endpoint | A query service returning `Page[T]`, not a repository |
-| An endpoint | `adapters/inbound/http/<domain>.py`, calling a use case |
+| An endpoint | `adapters/inbound/http/<domain>.py`, calling a use case through a `UseCasesDep` parameter |
 | A write endpoint | Also takes the `Idempotency-Key` header; the use case wraps its change in `run_once`. An update also takes `base_version`. |
 | A background or scheduled job | A job row from the use case; the task in `adapters/inbound/jobs/`, registered in bootstrap |
 | A new external service | A port in `application/ports/`, an adapter in `adapters/outbound/<technology>/`, wiring in `bootstrap/container.py`, and a fake in `tests/fakes/`. Add a suite in `tests/contracts/` when the fake holds state. |
 | A webhook from a vendor | A receiver in `adapters/inbound/http/webhooks/` that verifies the signature, deduplicates on the event ID and calls a use case |
 | A database table or column | `adapters/outbound/postgres/tables/`, then an expand-then-contract Alembic migration |
 | A setting | `bootstrap/settings.py`, passed to the adapter that needs it |
-| A new error a client can act on | A domain or application error with a new `code`, mapped in `adapters/inbound/http/errors.py` |
+| A new error a client can act on | A domain or application error with a new `code`, mapped by its exact class in `ERROR_STATUSES` in `adapters/inbound/http/errors.py`. A test fails while it has no entry. |
 | A change to an existing endpoint | Add, don't change (see Breaking changes in the [client contract](../client-contract.md)) |
 
 ## Testing
@@ -233,66 +237,83 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 
 ## Enforced boundaries
 
-These Import Linter contracts in `pyproject.toml` run in CI. A pull request that breaks one fails. The two domain-level contracts list the domains that exist today and grow as domains are added.
+These Import Linter contracts in `.importlinter` run in CI. A pull request that breaks one fails. The two domain-level contracts list the domains that exist today and grow as domains are added. The file is INI: each contract is an `importlinter:contract:<id>` section, and a list has one item per indented line.
 
-```toml
-[tool.importlinter]
-root_package = "tally_aloft"
+```ini
+[importlinter]
+root_package = tally_aloft
 include_external_packages = true
 
-[[tool.importlinter.contracts]]
-name = "Dependencies point inward"
-type = "layers"
-layers = [
-    "tally_aloft.main | tally_aloft.worker",
-    "tally_aloft.bootstrap",
-    "tally_aloft.adapters",
-    "tally_aloft.application",
-    "tally_aloft.domain",
-]
+[importlinter:contract:layers]
+name = Dependencies point inward
+type = layers
+layers =
+    tally_aloft.main | tally_aloft.worker
+    tally_aloft.bootstrap
+    tally_aloft.adapters
+    tally_aloft.application
+    tally_aloft.domain
 
 # Levels inside each package. Every domain has a package in both.
 # Same-level domains go on one line, separated by " | ".
-[[tool.importlinter.contracts]]
-name = "Domain levels within domain/ and application/"
-type = "layers"
-containers = ["tally_aloft.domain", "tally_aloft.application"]
-layers = [
-    "logbook | accounts",
-    "shared",
-]
+[importlinter:contract:domain-levels-within]
+name = Domain levels within domain/ and application/
+type = layers
+containers =
+    tally_aloft.domain
+    tally_aloft.application
+layers =
+    logbook | accounts
+    shared
 exhaustive = true
-exhaustive_ignores = ["ports", "registry"]
+exhaustive_ignores =
+    ports
+    registry
 
 # Levels across the two packages, so a use case can't reach up into a
 # higher domain's rules. Each line pairs a domain with its use cases;
 # same-level domains join the same line with " : ".
-[[tool.importlinter.contracts]]
-name = "Domain levels across domain/ and application/"
-type = "layers"
-layers = [
-    "tally_aloft.application.logbook : tally_aloft.domain.logbook : tally_aloft.application.accounts : tally_aloft.domain.accounts",
-    "tally_aloft.application.shared : tally_aloft.application.ports : tally_aloft.domain.shared",
-]
+[importlinter:contract:domain-levels-across]
+name = Domain levels across domain/ and application/
+type = layers
+layers =
+    tally_aloft.application.logbook : tally_aloft.domain.logbook : tally_aloft.application.accounts : tally_aloft.domain.accounts
+    tally_aloft.application.shared : tally_aloft.application.ports : tally_aloft.domain.shared
 
-[[tool.importlinter.contracts]]
-name = "Adapters are independent"
-type = "independence"
-modules = [
-    "tally_aloft.adapters.inbound.*",
-    "tally_aloft.adapters.outbound.*",
-]
+[importlinter:contract:adapters-independent]
+name = Adapters are independent
+type = independence
+modules =
+    tally_aloft.adapters.inbound.*
+    tally_aloft.adapters.outbound.*
 
-[[tool.importlinter.contracts]]
-name = "Domain and application have no framework or vendor code"
-type = "forbidden"
-source_modules = ["tally_aloft.domain", "tally_aloft.application"]
-forbidden_modules = [
-    "fastapi", "starlette", "uvicorn", "pydantic", "pydantic_settings",
-    "sqlalchemy", "asyncpg", "alembic", "redis", "taskiq", "taskiq_redis",
-    "aiohttp", "aiobotocore", "pydantic_ai", "typst", "cryptography",
-    "rfc8785", "jwt", "logfire", "opentelemetry",
-]
+[importlinter:contract:no-vendor-code]
+name = Domain and application have no framework or vendor code
+type = forbidden
+source_modules =
+    tally_aloft.domain
+    tally_aloft.application
+forbidden_modules =
+    fastapi
+    starlette
+    uvicorn
+    pydantic
+    pydantic_settings
+    sqlalchemy
+    asyncpg
+    alembic
+    redis
+    taskiq
+    taskiq_redis
+    aiohttp
+    aiobotocore
+    pydantic_ai
+    typst
+    cryptography
+    rfc8785
+    jwt
+    logfire
+    opentelemetry
 ```
 
 How the two level contracts divide the work:
@@ -301,7 +322,7 @@ How the two level contracts divide the work:
 - **Across packages**, a use case can't reach up into a higher domain's rules. Import Linter can't mix independent (`|`) and connected (`:`) modules on one line, so this contract can't stop a use case from reading a same-level domain's types; review covers that rule. The contract also has no containers, so it can't be exhaustive: check that each new domain was added to it.
 - **Ports sit on the bottom line** of the cross-package contract, so a port module that imports a domain's rules fails CI. `registry.py` isn't listed, and nothing in a level imports it.
 
-When a new vendor library is adopted, add it to the forbidden list. Import Linter fails on a forbidden package that isn't installed, so the list in `pyproject.toml` holds only installed packages, including transitive ones such as `starlette`, `aiohttp` and `opentelemetry`. The block above is the target list.
+When a new vendor library is adopted, add it to the forbidden list. With `include_external_packages = true`, Import Linter checks forbidden external modules that are present in the import graph; a listed package that is absent from the graph does not itself fail the lint. The list in `.importlinter` is the target list, including transitive packages such as `starlette`, `aiohttp` and `opentelemetry`.
 
 ## Conventions
 
