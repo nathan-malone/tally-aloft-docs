@@ -106,7 +106,7 @@ One backend API serves the web, iOS and Android clients. This document records w
     | `TALLY_DATABASE_MAX_OVERFLOW` | extra connections a process may open when its pool is busy, at least 0 | `5` | no |
     | `TALLY_DATABASE_STATEMENT_TIMEOUT` | seconds before Postgres cancels a statement, at least 1 | `30` | no |
     | `TALLY_VALKEY_URL` | the cache's Valkey, as `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, which staging and production require; reserved characters in the user and password percent-encoded, and no query; secret | none | yes, for the API, worker and scheduler |
-    | `TALLY_MIGRATION_DATABASE_URL` | the owner role's database, in the same format; secret | none | yes, for the migration task only |
+    | `TALLY_MIGRATION_DATABASE_URL` | the owner role's database, in `TALLY_DATABASE_URL`'s format; secret | none | yes, for the migration task only |
     | `TALLY_MIGRATION_LOCK_TIMEOUT` | seconds a migration waits for a lock before it fails, at least 1 | `5` | no |
     | `PGSSLROOTCERT` | the path to the CA bundle file that signs the database's certificate; not prefixed, because asyncpg reads it itself | none | yes, in staging and production, for the API, worker and migration task |
 
