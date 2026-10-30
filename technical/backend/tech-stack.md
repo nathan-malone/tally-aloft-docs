@@ -84,7 +84,7 @@ One backend API serves the web, iOS and Android clients. This document records w
 
 ## Operations
 
-- **Migrations** run as a one-off ECS task before each deploy. Old and new code run side by side during a rolling deploy, so schema changes are expand-then-contract: add, backfill, switch, then remove in a later release. Migrations set a `lock_timeout` and build indexes `CONCURRENTLY`.
+- **Migrations** run as a one-off ECS task before each deploy. Old and new code run side by side during a rolling deploy, so schema changes are expand-then-contract: add, backfill, switch, then remove in a later release. Migrations set a `lock_timeout` and build indexes on tables that hold data `CONCURRENTLY`; a new, empty table builds its indexes in the revision that creates it.
 - **Major Postgres upgrades** use RDS Blue/Green deployments to keep downtime short.
 - **Image contract.** This is what `tally-aloft-infra` builds on. Each story that adds a process, route or setting extends it.
   - **Image:** one `linux/arm64` image per commit, from the backend's one `Dockerfile`. It runs as UID 10001, not root, and holds only the virtual environment, `alembic.ini` and `migrations/`: no source tree, tests, dev dependencies, `.env` file or secrets.
