@@ -26,7 +26,7 @@ Make was chosen over listing raw commands, which had to be kept the same by hand
 
 ## Naming
 
-A target is `<noun>.<verb>` or `<noun>.<qualifier>.<verb>`: lowercase words joined by dots, naming what is acted on and then the action. Examples are `lint.check`, `image.build` and `packages.outdated.show`. The verbs are:
+A target is `<noun>.<verb>`, or `<noun>.<qualifier>.<verb>` with one or more qualifiers: lowercase words joined by dots, naming what is acted on, then what narrows it, then the action. Examples are `lint.check`, `image.build`, `packages.outdated.show` and `containers.e2e.job.run`. The verbs are:
 
 | Verb | Meaning |
 | --- | --- |

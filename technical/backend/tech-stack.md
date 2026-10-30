@@ -107,7 +107,7 @@ One backend API serves the web, iOS and Android clients. This document records w
     | `TALLY_DATABASE_URL` | the application role's database, as a SQLAlchemy URL naming the driver: `postgresql+asyncpg://user:password@host:port/database`, with reserved characters (`@ : / % # ?`) in the user and password percent-encoded; secret | none | yes, for the API and worker |
     | `TALLY_DATABASE_POOL_SIZE` | connections each process keeps open, at least 1 | `5` | no |
     | `TALLY_DATABASE_MAX_OVERFLOW` | extra connections a process may open when its pool is busy, at least 0 | `5` | no |
-    | `TALLY_DATABASE_STATEMENT_TIMEOUT` | seconds before Postgres cancels a statement, at least 1 | `30` | no |
+    | `TALLY_DATABASE_STATEMENT_TIMEOUT` | seconds before Postgres cancels a statement, at least 1; job tasks' backstop, a code constant, is sized for the default, so the worker's value stays at 30 unless that constant is raised (see [Background jobs](structure.md#background-jobs)) | `30` | no |
     | `TALLY_VALKEY_URL` | the cache's Valkey, as `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, which staging and production require, with a password; reserved characters in the user and password percent-encoded, and no query; secret | none | yes, for the API, worker and scheduler |
     | `TALLY_BROKER_IDLE_TIMEOUT` | seconds a task's message may go unacknowledged before another worker may reclaim it, at least 1; it must be greater than every registered task's timeout, or the worker fails at import | `900` | no |
     | `TALLY_BROKER_STREAM_MAXLEN` | the approximate number of messages the broker's stream is trimmed to, at least 1 | `100000` | no |
