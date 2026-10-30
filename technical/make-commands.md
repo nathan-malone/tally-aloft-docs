@@ -35,7 +35,7 @@ A target is `<noun>.<verb>` or `<noun>.<qualifier>.<verb>`: lowercase words join
 | `install`, `lock`, `update` | Dependencies: install exactly what is locked, update the lockfile after a manifest change, upgrade locked versions. |
 | `show` | Prints information and changes nothing. |
 | `build` | Builds an artifact, such as an image or a bundle. |
-| `run` | Runs one process in the foreground on the host. |
+| `run` | Runs one process in the foreground: on the host, or, for a `containers.` target, in a running container. |
 | `up`, `down` | Start and remove containers. |
 | `apply` | Applies pending changes to a running system, such as migrations to a database. |
 | `create` | Creates a file from a template, such as a migration revision. |
@@ -66,5 +66,5 @@ Every code repository has these targets, with the same meaning. The tool columns
 
 Targets that only one repository needs follow the same naming.
 
-- **Backend.** `image.build` builds the image, for a `PLATFORM` when one is given (CI passes `linux/arm64`). `api.run` runs the API on the host with reload, loading `.env` (see [Local development](backend/tech-stack.md#developer-tooling)). `containers.up` and `containers.down` start and remove the Compose `app` profile, and `containers.down ARGS=--volumes` deletes the data volumes too. `datastores.up` starts only the data stores, outside any profile, for the host loop, and waits until they are healthy. `migrations.apply` upgrades the database in `.env` to the latest migration, and `migrations.create NAME="..."` writes a new revision from the table models, failing without a `NAME`. `openapi.check` fails when the committed `openapi.json` differs from the API's schema, and `openapi.fix` writes it. Later stories add their processes and tools here, such as a `worker.run`, rather than documenting raw commands.
+- **Backend.** `image.build` builds the image, for a `PLATFORM` when one is given (CI passes `linux/arm64`). `api.run` runs the API on the host with reload, loading `.env` (see [Local development](backend/tech-stack.md#developer-tooling)). `containers.up` and `containers.down` start and remove the Compose `app` profile, and `containers.down ARGS=--volumes` deletes the data volumes too. `datastores.up` starts only the data stores, outside any profile, for the host loop, and waits until they are healthy. `migrations.apply` upgrades the database in `.env` to the latest migration, and `migrations.create NAME="..."` writes a new revision from the table models, failing without a `NAME`. `openapi.check` fails when the committed `openapi.json` differs from the API's schema, and `openapi.fix` writes it. `worker.run` runs one worker process on the host, loading `.env`. `containers.e2e.up` starts the `app` profile with `compose.e2e.yaml`, which swaps in the test worker, and `containers.e2e.job.run` records a test job against it and waits for it to succeed. Later stories add their processes and tools here, rather than documenting raw commands.
 - **Clients (proposed).** `codegen.check` for the `codegen:check` task, an end-to-end target for the Playwright run in CI, and a `run` target for each app, named when the repository is set up.
