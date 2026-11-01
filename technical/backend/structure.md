@@ -207,7 +207,7 @@ The HTTP authentication dependency calls `UseCases.authenticate`. It works in th
 
 1. **Fail.** In one unit of work, it marks `failed` the jobs that can never run again, and logs each with its ID, kind and code:
    - `attempts_exhausted`: `queued` jobs, and `running` jobs whose lease has expired, that have used `max_attempts`. This also catches workers killed without raising, out of memory for example. A `running` job on its last attempt with a valid lease is left alone.
-   - `unknown_kind`: `queued` or `running` jobs whose kind isn't one the workers register. Bootstrap passes the set in, from the task list (`job_kind_names`). An unknown kind wins over exhaustion.
+   - `unknown_kind`: `queued` jobs, and `running` jobs whose lease has expired, whose kind isn't one the workers register. A valid lease means a worker that has the kind is running the job, so it is left to finish. Bootstrap passes the set in, from the task list (`job_kind_names`). An unknown kind wins over exhaustion.
 2. **Select.** In a second unit of work, it takes the jobs below `max_attempts` that are `queued` with a `last_dispatched_at` older than the stale threshold, or `running` with an expired lease *and* a `last_dispatched_at` older than the threshold, oldest dispatch first. It sets `last_dispatched_at` to now on each and commits. The staleness guard on `running` jobs means an expired job is re-dispatched at most once per threshold, however often the sweep runs.
 3. **Dispatch.** After that commit, it calls `dispatch_safely` with the jobs it took, one at a time, as a use case does after recording.
 
