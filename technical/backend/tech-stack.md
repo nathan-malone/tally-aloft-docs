@@ -111,6 +111,8 @@ One backend API serves the web, iOS and Android clients. This document records w
     | `TALLY_VALKEY_URL` | the cache's Valkey, as `redis://[user:password@]host[:port][/database]`, or `rediss://` for TLS, which staging and production require, with a password; reserved characters in the user and password percent-encoded, and no query; secret | none | yes, for the API, worker and scheduler |
     | `TALLY_BROKER_IDLE_TIMEOUT` | seconds a task's message may go unacknowledged before another worker may reclaim it, at least 1; it must be greater than every registered task's timeout, or the worker fails at import | `900` | no |
     | `TALLY_BROKER_STREAM_MAXLEN` | the approximate number of messages the broker's stream is trimmed to, at least 1 | `100000` | no |
+    | `TALLY_JOB_STALE_AFTER` | seconds after a job's last dispatch that the sweeper dispatches it again, at least 1: a `queued` job no worker took, or a `running` one whose lease has expired; a failed attempt's retry waits for it too (see [the sweeper](structure.md#the-sweeper)) | `300` | no |
+    | `TALLY_SWEEP_BATCH_SIZE` | the most jobs each step of the sweeper handles in one run, at least 1 | `500` | no |
     | `TALLY_MIGRATION_DATABASE_URL` | the owner role's database, in `TALLY_DATABASE_URL`'s format; secret | none | yes, for the migration task only |
     | `TALLY_MIGRATION_LOCK_TIMEOUT` | seconds a migration waits for a lock before it fails, at least 1 | `5` | no |
     | `PGSSLROOTCERT` | the path to the CA bundle file that signs the database's certificate; not prefixed, because asyncpg reads it itself | none | yes, in staging and production, for the API, worker and migration task |
