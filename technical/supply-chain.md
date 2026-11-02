@@ -1,8 +1,8 @@
-Technical · Supply chain · October 2026
+Technical · Supply chain · November 2026
 
 # Tally Aloft — Dependency Supply Chain
 
-The rules every repository follows for the third-party code it installs or runs: packages and GitHub Actions. They exist to keep a compromised release, such as a malicious version published from a hijacked maintainer account, out of the lockfiles and the CI runs.
+The rules every repository follows for the third-party code it installs or runs: packages, GitHub Actions and the container images CI runs as tools. They exist to keep a compromised release, such as a malicious version published from a hijacked maintainer account, out of the lockfiles and the CI runs.
 
 ## Minimum release age: 7 days
 
@@ -25,3 +25,9 @@ The rules every repository follows for the third-party code it installs or runs:
 - **Commit SHAs, with the release in a comment.** Every third-party action is pinned to the full 40-character commit SHA of an exact release, followed by that release's tag in a comment, such as `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`. Never a tag or a branch alone. A tooling test checks this form in each workflow. Chosen over exact release tags, because whoever controls an action's repository can move a tag to new code, as the March 2025 compromise of `tj-actions/changed-files` did with existing version tags, and a commit SHA can't be moved. The comment keeps the version readable at a glance, so an update still shows what it changes.
 - **Updating a pin.** Resolve the release tag to its commit with `git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag> 'refs/tags/<tag>^{}'`. When the tag is annotated, the `^{}` line is the commit; pin that, not the tag object's SHA. Update the SHA and the comment together.
 - **7 days old.** A new action version is adopted only once its release is at least 7 days old, as for packages. No tool enforces this, so check the release's published date when you update a pin.
+
+## Container images run as tools
+
+- **Release tag and digest.** An image that CI runs as a tool, such as oasdiff's CLI image in the backend's breaking-change check, is pinned to its exact release tag and the digest of its multi-architecture index, as `tufin/oasdiff:v1.34.1@sha256:<digest>`. Docker runs the digest, which can't be moved as a tag can, and the tag keeps the version readable. A tooling test checks this form. The index digest, not one platform's, lets the same pin run on ARM64 CI and on developers' x86 machines. `docker buildx imagetools inspect <image>:<tag>` prints it.
+- **7 days old.** A new image version is adopted only once its release is at least 7 days old, as for packages and actions.
+- **Not covered:** the data-store images Compose runs for local development, such as `postgres:18`, which CI's tests also start; they aren't tools that judge a pull request.
