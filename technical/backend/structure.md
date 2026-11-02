@@ -32,10 +32,12 @@ tally-aloft-backend/
 ├── compose/
 │   └── postgres-init.sql     # creates the two login roles in local and test Postgres
 ├── Dockerfile                # one image; API, worker and scheduler differ by command; a `dev` stage adds tests/
-├── .github/workflows/        # CI and deploy
+├── .github/workflows/        # CI, the release workflow (publishes openapi.json per tag), and deploy
 ├── openapi.json              # committed API schema; CI checks it's current
+├── supported-schema-releases.txt  # tags whose schema a supported client release uses
 ├── scripts/
-│   └── export_openapi.py     # builds the app without connecting and writes openapi.json
+│   ├── export_openapi.py     # builds the app without connecting and writes openapi.json
+│   └── check_breaking_changes.py  # compares openapi.json with each supported release's schema
 ├── docs/
 ├── migrations/               # Alembic env.py and versions/
 ├── src/tally_aloft/
@@ -118,6 +120,7 @@ Entities, value objects and pure functions, written as frozen dataclasses and pl
   - **`.env` files.** For local development, a git-ignored `.env` file, copied from the committed `.env.example`, is loaded by the entry command (`uv run --env-file .env …`), never by `Settings`, and the image contains none.
   - **Startup errors.** Entry points call `load_settings()`. On a missing or invalid variable, it exits with one line that names each failing variable and its error type. The line is built from each error's location and type, never from `str(ValidationError)`, so no value appears in it. Secret settings use `SecretStr`.
   - **Connection URLs.** `connection_urls.py` holds the checks `settings.py` runs on the data stores' URLs, `check_database_url` and `check_valkey_url`, each told whether the process is deployed. Each parses with its client's own parser, so settings accept exactly what the client will, and reads no configuration itself.
+  - **Origins.** `origins.py` holds `check_origin`, which `settings.py` runs on each `TALLY_CORS_ORIGINS` entry (see CORS in [Client contract in the code](#client-contract-in-the-code)).
   - **Migration settings.** `MigrationSettings`, read by `load_migration_settings()`, is the migration task's own model: the owner role's database URL and the lock timeout, in `TALLY_MIGRATION_*` variables, and `TALLY_ENVIRONMENT`, which decides whether the URL must verify the server, as for the services. Only Alembic's `env.py` reads it, and `Settings` has no field for any `TALLY_MIGRATION_*` variable, so the services never hold the owner's credentials.
   - **Test and export profiles.** `Settings.for_tests(**values)` and `MigrationSettings.for_tests(**values)` are the test suite's profiles, and `Settings.for_schema_export()` needs no variables or secrets; the required database and Valkey URLs are filled with placeholders that refuse connections. None of them reads the process environment, so a developer's shell can't change them.
 - `broker.py` defines `build_broker(settings)`, the one factory for the Taskiq `RedisStreamBroker`, which connects only when first used.
@@ -227,7 +230,7 @@ The [client contract](../client-contract.md) sets the rules for the web and mobi
 | --- | --- | --- |
 | Operation IDs | `adapters/inbound/http/operation_ids.py` | Each router is created with one tag: its domain (`tags=["logbook"]`), or for shared routes its capability (`tags=["jobs"]`). Endpoint functions are named by verb (`list_flights`). `operation_id`, which `create_app` passes to `FastAPI(generate_unique_id_function=...)`, builds `logbook_list_flights` from the route's one tag and its endpoint function's name, never a `name=` override, which only `url_for` should see. Tags are strings (a `StrEnum` member is one). FastAPI also calls it for routes outside the schema, for routes without exactly one tag and for plain `Enum` tags, so it never raises: those get FastAPI's default ID, and the schema check reports any that are in the schema. Webhook and health routes use `include_in_schema=False`. |
 | Schema export | `scripts/export_openapi.py` | Builds the app with `Settings.for_schema_export()`, runs `check_schema` from `operation_ids.py`, and writes `openapi.json` with sorted keys, two-space indents, LF line endings (pinned in `.gitattributes`) and a trailing newline. `check_schema` reads the generated schema and fails, naming each route, on a route without exactly one tag, with an operation ID that doesn't start with its tag, or with an operation ID another route shares. `make openapi.fix` writes the file, and `make openapi.check`, part of `make check` and CI, fails when the committed file differs from the export.<br>**Breaking changes.** `supported-schema-releases.txt` at the repository root lists the backend tags (`vX.Y.Z`, one per line, `#` comments) whose schema a supported client release was built against; the README says when to add and remove one. `make openapi.breaking.check`, part of `make check` and CI but not `check.fast`, runs `scripts/check_breaking_changes.py`. For each listed tag it downloads that release's `openapi.json` asset with `gh release download` (in CI, with the workflow's read-only token), and fails, naming the tag, when the asset is missing. It then runs `oasdiff breaking` from oasdiff's CLI image, pinned by digest (see [supply chain](../supply-chain.md#container-images-run-as-tools)), with no network and no external refs, and fails on any finding at `WARN` or above. oasdiff ranks four changes that the client contract calls breaking only `INFO`, so the script's `SEVERITY_OVERRIDES` raise them to errors: a renamed operation ID (`api-operation-id-removed`), a removed optional response property, and the removal of a deprecated path or operation. An empty list passes without running anything. `check` takes the fetch and the comparison as functions, so tests fake both, and the `container` tests run the pinned image on fixture schemas. |
-| Client versions | `adapters/inbound/http/client_version.py`; `adapters/inbound/http/version_policy.py` | `ClientVersionMiddleware` reads `X-Client-Platform` and `X-Client-Version` and compares them with a `ClientVersionPolicy` (minimum version per platform) that `create_app` builds from `TALLY_MIN_CLIENT_VERSIONS`. The policy, `ClientPlatform` and `ClientVersion` live in `version_policy.py`, which imports only the standard library, so `Settings` can type the minimums without loading FastAPI in the worker and the scheduler. The middleware is plain ASGI, not `BaseHTTPMiddleware`, and returns the `400` `client_version_unsupported` response itself, because exceptions raised in middleware don't reach FastAPI's exception handlers. It sits inside `UnhandledErrorMiddleware` (see CORS below), so its rejections carry CORS headers. It skips the health routes (`HEALTH_PATHS` in `health.py`, which the routes use too, so a renamed route keeps its exemption) and `/webhooks` and every path under it. A request passes when either header is missing, when its platform has no minimum, or when its version doesn't parse as `MAJOR.MINOR.PATCH` (one to nine ASCII digits each); only the last is logged, at warning level, with the version truncated to 64 characters. |
+| Client versions | `adapters/inbound/http/client_version.py`; `adapters/inbound/http/version_policy.py` | `ClientVersionMiddleware` reads `X-Client-Platform` and `X-Client-Version` and compares them with a `ClientVersionPolicy` (minimum version per platform) that `create_app` builds from `TALLY_MIN_CLIENT_VERSIONS`. The policy, `ClientPlatform` and `ClientVersion` live in `version_policy.py`, which imports only the standard library, so `Settings` can type the minimums without loading FastAPI in the worker and the scheduler; an Import Linter contract (see [Enforced boundaries](#enforced-boundaries)) keeps it so. The middleware is plain ASGI, not `BaseHTTPMiddleware`, and returns the `400` `client_version_unsupported` response itself, because exceptions raised in middleware don't reach FastAPI's exception handlers. It sits inside `UnhandledErrorMiddleware` (see CORS below), so its rejections carry CORS headers. It skips the health routes (`HEALTH_PATHS` in `health.py`, which the routes use too, so a renamed route keeps its exemption) and `/webhooks` and every path under it. A request passes when either header is missing, when its platform has no minimum, or when its version doesn't parse as `MAJOR.MINOR.PATCH` (one to nine ASCII digits each); only the last is logged, at warning level, with the version truncated to 64 characters. |
 | Idempotency | `application/shared/idempotency.py`; `uow.idempotency` and `uow.idempotency_maintenance`; table `idempotency_keys` | See [Idempotency](#idempotency) below. |
 | Concurrent edits | The use case; the entry's head row | The use case locks the head row (`SELECT … FOR UPDATE`), compares `base_version` with the current version, and raises `version_conflict` if they differ. |
 | Job status | `application/shared/get_job_status.py`, route `GET /jobs/{id}` (tag `jobs`) | Returns status and, when done, a presigned download URL for any file the job produced. |
@@ -381,6 +384,20 @@ forbidden_modules =
     jwt
     logfire
     opentelemetry
+
+# Settings types the client minimums with this module, so it must stay
+# standard-library only: anything else would load in the worker and scheduler.
+[importlinter:contract:version-policy-stdlib]
+name = The client-version policy imports only the standard library
+type = forbidden
+source_modules =
+    tally_aloft.adapters.inbound.http.version_policy
+forbidden_modules =
+    fastapi
+    pydantic
+    starlette
+    tally_aloft.adapters.inbound.http.client_version
+    tally_aloft.adapters.inbound.http.errors
 ```
 
 How the two level contracts divide the work:
